@@ -3,10 +3,9 @@ import json
 import os
 import logging
 from datetime import datetime, timezone, date, timedelta
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Union
 
 from mcp.server.fastmcp import FastMCP
-from dotenv import load_dotenv
 
 from .ticktick_client import TickTickClient
 
@@ -17,35 +16,109 @@ logger = logging.getLogger(__name__)
 # Create FastMCP server
 mcp = FastMCP("ticktick")
 
-# Create TickTick client
-ticktick = None
+# Module-level client instance (process-scoped, not global across users)
+# In LibreChat multi-user mode, each user gets a separate process with their own instance
+# Custom exceptions for better error handling
+class TickTickAuthenticationError(Exception):
+    """Raised when authentication with TickTick fails or tokens are missing."""
+    pass
 
-def initialize_client():
-    global ticktick
+class TickTickAPIError(Exception):
+    """Raised when TickTick API returns an error response."""
+    pass
+
+class TickTickNetworkError(Exception):
+    """Raised when network connectivity issues prevent API communication."""
+    pass
+
+_client_instance = None
+
+def get_client() -> TickTickClient:
+    """
+    Get or create the TickTick client for this process.
+    
+    In LibreChat multi-user mode:
+    - Each user gets a separate process spawned by LibreChat
+    - Process has user-specific tokens in environment variables
+    - Client is lazily initialized on first tool call
+    - Client instance is reused for subsequent calls in same process
+    
+    Returns:
+        TickTickClient: Initialized client with user's tokens
+        
+    Raises:
+        TickTickAuthenticationError: If tokens are missing or invalid
+        TickTickAPIError: If TickTick API returns an error
+        TickTickNetworkError: If network connectivity fails
+    """
+    global _client_instance
+    
+    if _client_instance is not None:
+        return _client_instance
+    
     try:
-        # Check if .env file exists with access token
-        load_dotenv()
-        
-        # Check if we have valid credentials
+        # Check if tokens are available (should be set by LibreChat)
         if os.getenv("TICKTICK_ACCESS_TOKEN") is None:
-            logger.error("No access token found in .env file. Please run 'uv run -m ticktick_mcp.cli auth' to authenticate.")
-            return False
+            raise TickTickAuthenticationError(
+                "TICKTICK_ACCESS_TOKEN not found in environment. "
+                "Please authenticate with TickTick in LibreChat."
+            )
         
-        # Initialize the client
-        ticktick = TickTickClient()
-        logger.info("TickTick client initialized successfully")
+        # Initialize client (reads from env vars)
+        try:
+            _client_instance = TickTickClient()
+            logger.info("TickTick client initialized successfully")
+        except ValueError as e:
+            # TickTickClient raises ValueError for missing tokens
+            raise TickTickAuthenticationError(str(e))
         
         # Test API connectivity
-        projects = ticktick.get_projects()
-        if 'error' in projects:
-            logger.error(f"Failed to access TickTick API: {projects['error']}")
-            logger.error("Your access token may have expired. Please run 'uv run -m ticktick_mcp.cli auth' to refresh it.")
-            return False
+        try:
+            projects_result: Union[List[Dict[str, Any]], Dict[str, Any]] = _client_instance.get_projects()
+            if isinstance(projects_result, dict) and 'error' in projects_result:
+                error_msg = projects_result['error']
+                logger.error(f"Failed to connect to TickTick API: {error_msg}")
+                _client_instance = None  # Reset on failure
+                
+                # Determine error type from message
+                if 'auth' in error_msg.lower() or 'token' in error_msg.lower() or '401' in error_msg:
+                    raise TickTickAuthenticationError(f"Authentication failed: {error_msg}")
+                else:
+                    raise TickTickAPIError(f"TickTick API error: {error_msg}")
             
-        logger.info(f"Successfully connected to TickTick API with {len(projects)} projects")
+            # Type narrowing: projects_result must be a List
+            projects: List[Dict[str, Any]] = projects_result  # type: ignore
+            logger.info(f"Connected to TickTick API with {len(projects)} projects")
+            return _client_instance
+            
+        except (ConnectionError, TimeoutError) as e:
+            logger.error(f"Network error connecting to TickTick: {e}")
+            _client_instance = None
+            raise TickTickNetworkError(f"Network connectivity issue: {str(e)}")
+        
+    except (TickTickAuthenticationError, TickTickAPIError, TickTickNetworkError):
+        # Re-raise our custom exceptions
+        _client_instance = None
+        raise
+    except Exception as e:
+        # Catch any other unexpected errors
+        logger.error(f"Unexpected error initializing TickTick client: {e}")
+        _client_instance = None
+        raise TickTickAPIError(f"Unexpected error: {str(e)}")
+
+def initialize_client() -> bool:
+    """
+    Initialize client and return success status.
+    Kept for backward compatibility with Claude Desktop.
+    
+    Returns:
+        True if client initialized successfully, False otherwise
+    """
+    try:
+        get_client()
         return True
     except Exception as e:
-        logger.error(f"Failed to initialize TickTick client: {e}")
+        logger.error(f"Client initialization failed: {e}")
         return False
 
 # Format a task object from TickTick for better display
@@ -115,14 +188,16 @@ def format_project(project: Dict) -> str:
 @mcp.tool()
 async def get_projects() -> str:
     """Get all projects from TickTick."""
-    if not ticktick:
-        if not initialize_client():
-            return "Failed to initialize TickTick client. Please check your API credentials."
-    
     try:
-        projects = ticktick.get_projects()
-        if 'error' in projects:
-            return f"Error fetching projects: {projects['error']}"
+        client = get_client()
+        projects_result: Union[List[Dict[str, Any]], Dict[str, Any]] = client.get_projects()
+        
+        # Check if result is an error dict
+        if isinstance(projects_result, dict) and 'error' in projects_result:
+            return f"Error fetching projects: {projects_result['error']}"
+        
+        # Type narrowing: at this point, projects_result must be a List
+        projects: List[Dict[str, Any]] = projects_result  # type: ignore
         
         if not projects:
             return "No projects found."
@@ -132,9 +207,18 @@ async def get_projects() -> str:
             result += f"Project {i}:\n" + format_project(project) + "\n"
         
         return result
+    except TickTickAuthenticationError as e:
+        logger.error(f"Authentication error in get_projects: {e}")
+        return f"❌ Authentication Error: {str(e)}\n\nPlease authenticate with TickTick in the LibreChat UI."
+    except TickTickAPIError as e:
+        logger.error(f"API error in get_projects: {e}")
+        return f"❌ TickTick API Error: {str(e)}\n\nThe TickTick service may be experiencing issues. Please try again later."
+    except TickTickNetworkError as e:
+        logger.error(f"Network error in get_projects: {e}")
+        return f"❌ Network Error: {str(e)}\n\nPlease check your internet connection and try again."
     except Exception as e:
-        logger.error(f"Error in get_projects: {e}")
-        return f"Error retrieving projects: {str(e)}"
+        logger.error(f"Unexpected error in get_projects: {e}")
+        return f"❌ Unexpected Error: {str(e)}"
 
 @mcp.tool()
 async def get_project(project_id: str) -> str:
@@ -144,19 +228,38 @@ async def get_project(project_id: str) -> str:
     Args:
         project_id: ID of the project
     """
-    if not ticktick:
-        if not initialize_client():
-            return "Failed to initialize TickTick client. Please check your API credentials."
-    
     try:
-        project = ticktick.get_project(project_id)
+        client = get_client()
+        project = client.get_project(project_id)
+        
         if 'error' in project:
-            return f"Error fetching project: {project['error']}"
+            error_type = project.get('type', 'unknown')
+            error_msg = project['error']
+            
+            if error_type == 'auth':
+                return f"❌ Authentication Error: {error_msg}\n\nPlease re-authenticate with TickTick in LibreChat."
+            elif error_type == 'permission':
+                return f"❌ Permission Denied: {error_msg}\n\nYou don't have access to this project."
+            elif error_type == 'not_found':
+                return f"❌ Project Not Found: The project may have been deleted.\n\nProject ID: {project_id}"
+            elif error_type == 'network':
+                return f"❌ Network Error: {error_msg}\n\nPlease check your internet connection and try again."
+            else:
+                return f"❌ API Error: {error_msg}"
         
         return format_project(project)
+    except TickTickAuthenticationError as e:
+        logger.error(f"Authentication error in get_project: {e}")
+        return f"❌ Authentication Error: {str(e)}\n\nPlease authenticate with TickTick in LibreChat."
+    except TickTickAPIError as e:
+        logger.error(f"API error in get_project: {e}")
+        return f"❌ TickTick API Error: {str(e)}\n\nThe TickTick service may be experiencing issues."
+    except TickTickNetworkError as e:
+        logger.error(f"Network error in get_project: {e}")
+        return f"❌ Network Error: {str(e)}\n\nPlease check your internet connection and try again."
     except Exception as e:
-        logger.error(f"Error in get_project: {e}")
-        return f"Error retrieving project: {str(e)}"
+        logger.error(f"Unexpected error in get_project: {e}")
+        return f"❌ Unexpected Error: {str(e)}"
 
 @mcp.tool()
 async def get_project_tasks(project_id: str) -> str:
@@ -166,14 +269,24 @@ async def get_project_tasks(project_id: str) -> str:
     Args:
         project_id: ID of the project
     """
-    if not ticktick:
-        if not initialize_client():
-            return "Failed to initialize TickTick client. Please check your API credentials."
-    
     try:
-        project_data = ticktick.get_project_with_data(project_id)
+        client = get_client()
+        project_data = client.get_project_with_data(project_id)
+        
         if 'error' in project_data:
-            return f"Error fetching project data: {project_data['error']}"
+            error_type = project_data.get('type', 'unknown')
+            error_msg = project_data['error']
+            
+            if error_type == 'auth':
+                return f"❌ Authentication Error: {error_msg}\n\nPlease re-authenticate with TickTick in LibreChat."
+            elif error_type == 'permission':
+                return f"❌ Permission Denied: {error_msg}\n\nYou don't have access to this project."
+            elif error_type == 'not_found':
+                return f"❌ Project Not Found: The project may have been deleted.\n\nProject ID: {project_id}"
+            elif error_type == 'network':
+                return f"❌ Network Error: {error_msg}\n\nPlease check your internet connection and try again."
+            else:
+                return f"❌ API Error: {error_msg}"
         
         tasks = project_data.get('tasks', [])
         if not tasks:
@@ -184,9 +297,18 @@ async def get_project_tasks(project_id: str) -> str:
             result += f"Task {i}:\n" + format_task(task) + "\n"
         
         return result
+    except TickTickAuthenticationError as e:
+        logger.error(f"Authentication error in get_project_tasks: {e}")
+        return f"❌ Authentication Error: {str(e)}\n\nPlease authenticate with TickTick in LibreChat."
+    except TickTickAPIError as e:
+        logger.error(f"API error in get_project_tasks: {e}")
+        return f"❌ TickTick API Error: {str(e)}\n\nThe TickTick service may be experiencing issues."
+    except TickTickNetworkError as e:
+        logger.error(f"Network error in get_project_tasks: {e}")
+        return f"❌ Network Error: {str(e)}\n\nPlease check your internet connection and try again."
     except Exception as e:
-        logger.error(f"Error in get_project_tasks: {e}")
-        return f"Error retrieving project tasks: {str(e)}"
+        logger.error(f"Unexpected error in get_project_tasks: {e}")
+        return f"❌ Unexpected Error: {str(e)}"
 
 @mcp.tool()
 async def get_task(project_id: str, task_id: str) -> str:
@@ -197,27 +319,46 @@ async def get_task(project_id: str, task_id: str) -> str:
         project_id: ID of the project
         task_id: ID of the task
     """
-    if not ticktick:
-        if not initialize_client():
-            return "Failed to initialize TickTick client. Please check your API credentials."
-    
     try:
-        task = ticktick.get_task(project_id, task_id)
+        client = get_client()
+        task = client.get_task(project_id, task_id)
+        
         if 'error' in task:
-            return f"Error fetching task: {task['error']}"
+            error_type = task.get('type', 'unknown')
+            error_msg = task['error']
+            
+            if error_type == 'auth':
+                return f"❌ Authentication Error: {error_msg}\n\nPlease re-authenticate with TickTick in LibreChat."
+            elif error_type == 'permission':
+                return f"❌ Permission Denied: {error_msg}\n\nYou don't have access to this task."
+            elif error_type == 'not_found':
+                return f"❌ Task Not Found: The task may have been deleted.\n\nTask ID: {task_id}\nProject ID: {project_id}"
+            elif error_type == 'network':
+                return f"❌ Network Error: {error_msg}\n\nPlease check your internet connection and try again."
+            else:
+                return f"❌ API Error: {error_msg}"
         
         return format_task(task)
+    except TickTickAuthenticationError as e:
+        logger.error(f"Authentication error in get_task: {e}")
+        return f"❌ Authentication Error: {str(e)}\n\nPlease authenticate with TickTick in LibreChat."
+    except TickTickAPIError as e:
+        logger.error(f"API error in get_task: {e}")
+        return f"❌ TickTick API Error: {str(e)}\n\nThe TickTick service may be experiencing issues."
+    except TickTickNetworkError as e:
+        logger.error(f"Network error in get_task: {e}")
+        return f"❌ Network Error: {str(e)}\n\nPlease check your internet connection and try again."
     except Exception as e:
-        logger.error(f"Error in get_task: {e}")
-        return f"Error retrieving task: {str(e)}"
+        logger.error(f"Unexpected error in get_task: {e}")
+        return f"❌ Unexpected Error: {str(e)}"
 
 @mcp.tool()
 async def create_task(
     title: str, 
     project_id: str, 
-    content: str = None, 
-    start_date: str = None, 
-    due_date: str = None, 
+    content: Optional[str] = None, 
+    start_date: Optional[str] = None, 
+    due_date: Optional[str] = None, 
     priority: int = 0
 ) -> str:
     """
@@ -231,10 +372,6 @@ async def create_task(
         due_date: Due date in ISO format YYYY-MM-DDThh:mm:ss+0000 (optional)
         priority: Priority level (0: None, 1: Low, 3: Medium, 5: High) (optional)
     """
-    if not ticktick:
-        if not initialize_client():
-            return "Failed to initialize TickTick client. Please check your API credentials."
-    
     # Validate priority
     if priority not in [0, 1, 3, 5]:
         return "Invalid priority. Must be 0 (None), 1 (Low), 3 (Medium), or 5 (High)."
@@ -244,12 +381,12 @@ async def create_task(
         for date_str, date_name in [(start_date, "start_date"), (due_date, "due_date")]:
             if date_str:
                 try:
-                    # Try to parse the date to validate it
                     datetime.fromisoformat(date_str.replace("Z", "+00:00"))
                 except ValueError:
                     return f"Invalid {date_name} format. Use ISO format: YYYY-MM-DDThh:mm:ss+0000"
         
-        task = ticktick.create_task(
+        client = get_client()
+        task = client.create_task(
             title=title,
             project_id=project_id,
             content=content,
@@ -262,19 +399,32 @@ async def create_task(
             return f"Error creating task: {task['error']}"
         
         return f"Task created successfully:\n\n" + format_task(task)
+    except ValueError as e:
+        # Validation errors from TaskValidator
+        logger.error(f"Validation error in create_task: {e}")
+        return f"❌ Validation Error: {str(e)}"
+    except TickTickAuthenticationError as e:
+        logger.error(f"Authentication error in create_task: {e}")
+        return f"❌ Authentication Error: {str(e)}\n\nPlease authenticate with TickTick in the LibreChat UI."
+    except TickTickAPIError as e:
+        logger.error(f"API error in create_task: {e}")
+        return f"❌ TickTick API Error: {str(e)}\n\nThe task could not be created. Please verify the project_id and try again."
+    except TickTickNetworkError as e:
+        logger.error(f"Network error in create_task: {e}")
+        return f"❌ Network Error: {str(e)}\n\nPlease check your internet connection and try again."
     except Exception as e:
-        logger.error(f"Error in create_task: {e}")
-        return f"Error creating task: {str(e)}"
+        logger.error(f"Unexpected error in create_task: {e}")
+        return f"❌ Unexpected Error: {str(e)}"
 
 @mcp.tool()
 async def update_task(
     task_id: str,
     project_id: str,
-    title: str = None,
-    content: str = None,
-    start_date: str = None,
-    due_date: str = None,
-    priority: int = None
+    title: Optional[str] = None,
+    content: Optional[str] = None,
+    start_date: Optional[str] = None,
+    due_date: Optional[str] = None,
+    priority: Optional[int] = None
 ) -> str:
     """
     Update an existing task in TickTick.
@@ -288,10 +438,6 @@ async def update_task(
         due_date: New due date in ISO format YYYY-MM-DDThh:mm:ss+0000 (optional)
         priority: New priority level (0: None, 1: Low, 3: Medium, 5: High) (optional)
     """
-    if not ticktick:
-        if not initialize_client():
-            return "Failed to initialize TickTick client. Please check your API credentials."
-    
     # Validate priority if provided
     if priority is not None and priority not in [0, 1, 3, 5]:
         return "Invalid priority. Must be 0 (None), 1 (Low), 3 (Medium), or 5 (High)."
@@ -301,12 +447,12 @@ async def update_task(
         for date_str, date_name in [(start_date, "start_date"), (due_date, "due_date")]:
             if date_str:
                 try:
-                    # Try to parse the date to validate it
                     datetime.fromisoformat(date_str.replace("Z", "+00:00"))
                 except ValueError:
                     return f"Invalid {date_name} format. Use ISO format: YYYY-MM-DDThh:mm:ss+0000"
         
-        task = ticktick.update_task(
+        client = get_client()
+        task = client.update_task(
             task_id=task_id,
             project_id=project_id,
             title=title,
@@ -317,12 +463,37 @@ async def update_task(
         )
         
         if 'error' in task:
-            return f"Error updating task: {task['error']}"
+            error_type = task.get('type', 'unknown')
+            error_msg = task['error']
+            
+            if error_type == 'auth':
+                return f"❌ Authentication Error: {error_msg}\n\nPlease re-authenticate with TickTick in LibreChat."
+            elif error_type == 'permission':
+                return f"❌ Permission Denied: {error_msg}\n\nYou don't have permission to update this task."
+            elif error_type == 'not_found':
+                return f"❌ Task Not Found: The task may have been deleted.\n\nTask ID: {task_id}\nPlease verify the task still exists."
+            elif error_type == 'network':
+                return f"❌ Network Error: {error_msg}\n\nPlease check your internet connection and try again."
+            else:
+                return f"❌ API Error: {error_msg}"
         
         return f"Task updated successfully:\n\n" + format_task(task)
+    except ValueError as e:
+        # Validation errors from TaskValidator
+        logger.error(f"Validation error in update_task: {e}")
+        return f"❌ Validation Error: {str(e)}"
+    except TickTickAuthenticationError as e:
+        logger.error(f"Authentication error in update_task: {e}")
+        return f"❌ Authentication Error: {str(e)}\n\nPlease authenticate with TickTick in LibreChat."
+    except TickTickAPIError as e:
+        logger.error(f"API error in update_task: {e}")
+        return f"❌ TickTick API Error: {str(e)}\n\nUnable to update the task. Please try again."
+    except TickTickNetworkError as e:
+        logger.error(f"Network error in update_task: {e}")
+        return f"❌ Network Error: {str(e)}\n\nPlease check your internet connection and try again."
     except Exception as e:
-        logger.error(f"Error in update_task: {e}")
-        return f"Error updating task: {str(e)}"
+        logger.error(f"Unexpected error in update_task: {e}")
+        return f"❌ Unexpected Error: {str(e)}"
 
 @mcp.tool()
 async def complete_task(project_id: str, task_id: str) -> str:
@@ -333,19 +504,38 @@ async def complete_task(project_id: str, task_id: str) -> str:
         project_id: ID of the project
         task_id: ID of the task
     """
-    if not ticktick:
-        if not initialize_client():
-            return "Failed to initialize TickTick client. Please check your API credentials."
-    
     try:
-        result = ticktick.complete_task(project_id, task_id)
-        if 'error' in result:
-            return f"Error completing task: {result['error']}"
+        client = get_client()
+        result = client.complete_task(project_id, task_id)
         
-        return f"Task {task_id} marked as complete."
+        if 'error' in result:
+            error_type = result.get('type', 'unknown')
+            error_msg = result['error']
+            
+            if error_type == 'auth':
+                return f"❌ Authentication Error: {error_msg}\n\nPlease re-authenticate with TickTick in LibreChat."
+            elif error_type == 'permission':
+                return f"❌ Permission Denied: {error_msg}\n\nYou don't have permission to complete this task."
+            elif error_type == 'not_found':
+                return f"❌ Task Not Found: Cannot complete task. It may have been deleted.\n\nTask ID: {task_id}"
+            elif error_type == 'network':
+                return f"❌ Network Error: {error_msg}\n\nPlease check your internet connection and try again."
+            else:
+                return f"❌ API Error: {error_msg}"
+        
+        return f"✅ Task {task_id} marked as complete."
+    except TickTickAuthenticationError as e:
+        logger.error(f"Authentication error in complete_task: {e}")
+        return f"❌ Authentication Error: {str(e)}\n\nPlease authenticate with TickTick in LibreChat."
+    except TickTickAPIError as e:
+        logger.error(f"API error in complete_task: {e}")
+        return f"❌ TickTick API Error: {str(e)}\n\nUnable to complete the task."
+    except TickTickNetworkError as e:
+        logger.error(f"Network error in complete_task: {e}")
+        return f"❌ Network Error: {str(e)}\n\nPlease check your internet connection and try again."
     except Exception as e:
-        logger.error(f"Error in complete_task: {e}")
-        return f"Error completing task: {str(e)}"
+        logger.error(f"Unexpected error in complete_task: {e}")
+        return f"❌ Unexpected Error: {str(e)}"
 
 @mcp.tool()
 async def delete_task(project_id: str, task_id: str) -> str:
@@ -356,19 +546,38 @@ async def delete_task(project_id: str, task_id: str) -> str:
         project_id: ID of the project
         task_id: ID of the task
     """
-    if not ticktick:
-        if not initialize_client():
-            return "Failed to initialize TickTick client. Please check your API credentials."
-    
     try:
-        result = ticktick.delete_task(project_id, task_id)
-        if 'error' in result:
-            return f"Error deleting task: {result['error']}"
+        client = get_client()
+        result = client.delete_task(project_id, task_id)
         
-        return f"Task {task_id} deleted successfully."
+        if 'error' in result:
+            error_type = result.get('type', 'unknown')
+            error_msg = result['error']
+            
+            if error_type == 'auth':
+                return f"❌ Authentication Error: {error_msg}\n\nPlease re-authenticate with TickTick in LibreChat."
+            elif error_type == 'permission':
+                return f"❌ Permission Denied: {error_msg}\n\nYou don't have permission to delete this task."
+            elif error_type == 'not_found':
+                return f"❌ Task Not Found: The task may have already been deleted.\n\nTask ID: {task_id}"
+            elif error_type == 'network':
+                return f"❌ Network Error: {error_msg}\n\nPlease check your internet connection and try again."
+            else:
+                return f"❌ API Error: {error_msg}"
+        
+        return f"✅ Task {task_id} deleted successfully."
+    except TickTickAuthenticationError as e:
+        logger.error(f"Authentication error in delete_task: {e}")
+        return f"❌ Authentication Error: {str(e)}\n\nPlease authenticate with TickTick in LibreChat."
+    except TickTickAPIError as e:
+        logger.error(f"API error in delete_task: {e}")
+        return f"❌ TickTick API Error: {str(e)}\n\nUnable to delete the task."
+    except TickTickNetworkError as e:
+        logger.error(f"Network error in delete_task: {e}")
+        return f"❌ Network Error: {str(e)}\n\nPlease check your internet connection and try again."
     except Exception as e:
-        logger.error(f"Error in delete_task: {e}")
-        return f"Error deleting task: {str(e)}"
+        logger.error(f"Unexpected error in delete_task: {e}")
+        return f"❌ Unexpected Error: {str(e)}"
 
 @mcp.tool()
 async def create_project(
@@ -384,28 +593,114 @@ async def create_project(
         color: Color code (hex format) (optional)
         view_mode: View mode - one of list, kanban, or timeline (optional)
     """
-    if not ticktick:
-        if not initialize_client():
-            return "Failed to initialize TickTick client. Please check your API credentials."
-    
     # Validate view_mode
     if view_mode not in ["list", "kanban", "timeline"]:
         return "Invalid view_mode. Must be one of: list, kanban, timeline."
     
     try:
-        project = ticktick.create_project(
+        client = get_client()
+        project = client.create_project(
             name=name,
             color=color,
             view_mode=view_mode
         )
         
         if 'error' in project:
-            return f"Error creating project: {project['error']}"
+            error_type = project.get('type', 'unknown')
+            error_msg = project['error']
+            
+            if error_type == 'auth':
+                return f"❌ Authentication Error: {error_msg}\n\nPlease re-authenticate with TickTick in LibreChat."
+            elif error_type == 'permission':
+                return f"❌ Permission Denied: {error_msg}\n\nYou don't have permission to create projects."
+            elif error_type == 'network':
+                return f"❌ Network Error: {error_msg}\n\nPlease check your internet connection and try again."
+            else:
+                return f"❌ API Error: {error_msg}"
         
-        return f"Project created successfully:\n\n" + format_project(project)
+        return f"✅ Project created successfully:\n\n" + format_project(project)
+    except ValueError as e:
+        # Validation errors from TaskValidator
+        logger.error(f"Validation error in create_project: {e}")
+        return f"❌ Validation Error: {str(e)}"
+    except TickTickAuthenticationError as e:
+        logger.error(f"Authentication error in create_project: {e}")
+        return f"❌ Authentication Error: {str(e)}\n\nPlease authenticate with TickTick in LibreChat."
+    except TickTickAPIError as e:
+        logger.error(f"API error in create_project: {e}")
+        return f"❌ TickTick API Error: {str(e)}\n\nUnable to create the project."
+    except TickTickNetworkError as e:
+        logger.error(f"Network error in create_project: {e}")
+        return f"❌ Network Error: {str(e)}\n\nPlease check your internet connection and try again."
     except Exception as e:
-        logger.error(f"Error in create_project: {e}")
-        return f"Error creating project: {str(e)}"
+        logger.error(f"Unexpected error in create_project: {e}")
+        return f"❌ Unexpected Error: {str(e)}"
+
+@mcp.tool()
+async def update_project(
+    project_id: str,
+    name: Optional[str] = None,
+    color: Optional[str] = None,
+    view_mode: Optional[str] = None
+) -> str:
+    """
+    Update an existing project in TickTick.
+    
+    Args:
+        project_id: ID of the project to update
+        name: New project name (optional)
+        color: New color code (hex format) (optional)
+        view_mode: New view mode - one of list, kanban, or timeline (optional)
+    """
+    # Validate view_mode if provided
+    if view_mode and view_mode not in ["list", "kanban", "timeline"]:
+        return "Invalid view_mode. Must be one of: list, kanban, timeline."
+    
+    # Check that at least one field is being updated
+    if not any([name, color, view_mode]):
+        return "❌ No updates provided. Please specify at least one field to update (name, color, or view_mode)."
+    
+    try:
+        client = get_client()
+        project = client.update_project(
+            project_id=project_id,
+            name=name,
+            color=color,
+            view_mode=view_mode
+        )
+        
+        if 'error' in project:
+            error_type = project.get('type', 'unknown')
+            error_msg = project['error']
+            
+            if error_type == 'auth':
+                return f"❌ Authentication Error: {error_msg}\n\nPlease re-authenticate with TickTick in LibreChat."
+            elif error_type == 'permission':
+                return f"❌ Permission Denied: {error_msg}\n\nYou don't have permission to update this project."
+            elif error_type == 'not_found':
+                return f"❌ Project Not Found: The project may have been deleted.\n\nProject ID: {project_id}\nPlease verify the project still exists."
+            elif error_type == 'network':
+                return f"❌ Network Error: {error_msg}\n\nPlease check your internet connection and try again."
+            else:
+                return f"❌ API Error: {error_msg}"
+        
+        return f"✅ Project updated successfully:\n\n" + format_project(project)
+    except ValueError as e:
+        # Validation errors from TaskValidator
+        logger.error(f"Validation error in update_project: {e}")
+        return f"❌ Validation Error: {str(e)}"
+    except TickTickAuthenticationError as e:
+        logger.error(f"Authentication error in update_project: {e}")
+        return f"❌ Authentication Error: {str(e)}\n\nPlease authenticate with TickTick in LibreChat."
+    except TickTickAPIError as e:
+        logger.error(f"API error in update_project: {e}")
+        return f"❌ TickTick API Error: {str(e)}\n\nUnable to update the project."
+    except TickTickNetworkError as e:
+        logger.error(f"Network error in update_project: {e}")
+        return f"❌ Network Error: {str(e)}\n\nPlease check your internet connection and try again."
+    except Exception as e:
+        logger.error(f"Unexpected error in update_project: {e}")
+        return f"❌ Unexpected Error: {str(e)}"
 
 @mcp.tool()
 async def delete_project(project_id: str) -> str:
@@ -415,19 +710,38 @@ async def delete_project(project_id: str) -> str:
     Args:
         project_id: ID of the project
     """
-    if not ticktick:
-        if not initialize_client():
-            return "Failed to initialize TickTick client. Please check your API credentials."
-    
     try:
-        result = ticktick.delete_project(project_id)
-        if 'error' in result:
-            return f"Error deleting project: {result['error']}"
+        client = get_client()
+        result = client.delete_project(project_id)
         
-        return f"Project {project_id} deleted successfully."
+        if 'error' in result:
+            error_type = result.get('type', 'unknown')
+            error_msg = result['error']
+            
+            if error_type == 'auth':
+                return f"❌ Authentication Error: {error_msg}\n\nPlease re-authenticate with TickTick in LibreChat."
+            elif error_type == 'permission':
+                return f"❌ Permission Denied: {error_msg}\n\nYou don't have permission to delete this project."
+            elif error_type == 'not_found':
+                return f"❌ Project Not Found: The project may have already been deleted.\n\nProject ID: {project_id}"
+            elif error_type == 'network':
+                return f"❌ Network Error: {error_msg}\n\nPlease check your internet connection and try again."
+            else:
+                return f"❌ API Error: {error_msg}"
+        
+        return f"✅ Project {project_id} deleted successfully."
+    except TickTickAuthenticationError as e:
+        logger.error(f"Authentication error in delete_project: {e}")
+        return f"❌ Authentication Error: {str(e)}\n\nPlease authenticate with TickTick in LibreChat."
+    except TickTickAPIError as e:
+        logger.error(f"API error in delete_project: {e}")
+        return f"❌ TickTick API Error: {str(e)}\n\nUnable to delete the project."
+    except TickTickNetworkError as e:
+        logger.error(f"Network error in delete_project: {e}")
+        return f"❌ Network Error: {str(e)}\n\nPlease check your internet connection and try again."
     except Exception as e:
-        logger.error(f"Error in delete_project: {e}")
-        return f"Error deleting project: {str(e)}"
+        logger.error(f"Unexpected error in delete_project: {e}")
+        return f"❌ Unexpected Error: {str(e)}"
     
 
 ### Improved Task MCP Tools
@@ -550,6 +864,7 @@ def _get_project_tasks_by_filter(projects: List[Dict], filter_func, filter_name:
     if not projects:
         return "No projects found."
     
+    client = get_client()
     result = f"Found {len(projects)} projects:\n\n"
     
     for i, project in enumerate(projects, 1):
@@ -557,7 +872,7 @@ def _get_project_tasks_by_filter(projects: List[Dict], filter_func, filter_name:
             continue
             
         project_id = project.get('id', 'No ID')
-        project_data = ticktick.get_project_with_data(project_id)
+        project_data = client.get_project_with_data(project_id)
         tasks = project_data.get('tasks', [])
         
         if not tasks:
@@ -583,23 +898,34 @@ def _get_project_tasks_by_filter(projects: List[Dict], filter_func, filter_name:
 @mcp.tool()
 async def get_all_tasks() -> str:
     """Get all tasks from TickTick. Ignores closed projects."""
-    if not ticktick:
-        if not initialize_client():
-            return "Failed to initialize TickTick client. Please check your API credentials."
-    
     try:
-        projects = ticktick.get_projects()
-        if 'error' in projects:
-            return f"Error fetching projects: {projects['error']}"
+        client = get_client()
+        projects_result: Union[List[Dict[str, Any]], Dict[str, Any]] = client.get_projects()
+        
+        # Check if result is an error dict
+        if isinstance(projects_result, dict) and 'error' in projects_result:
+            return f"Error fetching projects: {projects_result['error']}"
+        
+        # Type narrowing: projects_result must be a List
+        projects: List[Dict[str, Any]] = projects_result  # type: ignore
         
         def all_tasks_filter(task: Dict[str, Any]) -> bool:
             return True  # Include all tasks
         
         return _get_project_tasks_by_filter(projects, all_tasks_filter, "included")
         
+    except TickTickAuthenticationError as e:
+        logger.error(f"Authentication error in get_all_tasks: {e}")
+        return f"❌ Authentication Error: {str(e)}\n\nPlease authenticate with TickTick in LibreChat."
+    except TickTickAPIError as e:
+        logger.error(f"API error in get_all_tasks: {e}")
+        return f"❌ TickTick API Error: {str(e)}\n\nThe TickTick service may be experiencing issues."
+    except TickTickNetworkError as e:
+        logger.error(f"Network error in get_all_tasks: {e}")
+        return f"❌ Network Error: {str(e)}\n\nPlease check your internet connection and try again."
     except Exception as e:
-        logger.error(f"Error in get_all_tasks: {e}")
-        return f"Error retrieving projects: {str(e)}"
+        logger.error(f"Unexpected error in get_all_tasks: {e}")
+        return f"❌ Unexpected Error: {str(e)}"
 
 @mcp.tool()
 async def get_tasks_by_priority(priority_id: int) -> str:
@@ -609,17 +935,17 @@ async def get_tasks_by_priority(priority_id: int) -> str:
     Args:
         priority_id: Priority of tasks to retrieve {0: "None", 1: "Low", 3: "Medium", 5: "High"}
     """
-    if not ticktick:
-        if not initialize_client():
-            return "Failed to initialize TickTick client. Please check your API credentials."
-    
     if priority_id not in PRIORITY_MAP:
         return f"Invalid priority_id. Valid values: {list(PRIORITY_MAP.keys())}"
     
     try:
-        projects = ticktick.get_projects()
-        if 'error' in projects:
-            return f"Error fetching projects: {projects['error']}"
+        client = get_client()
+        projects_result: Union[List[Dict[str, Any]], Dict[str, Any]] = client.get_projects()
+        
+        if isinstance(projects_result, dict) and 'error' in projects_result:
+            return f"Error fetching projects: {projects_result['error']}"
+        
+        projects: List[Dict[str, Any]] = projects_result  # type: ignore
         
         def priority_filter(task: Dict[str, Any]) -> bool:
             return task.get('priority', 0) == priority_id
@@ -627,72 +953,108 @@ async def get_tasks_by_priority(priority_id: int) -> str:
         priority_name = f"{PRIORITY_MAP[priority_id]} ({priority_id})"
         return _get_project_tasks_by_filter(projects, priority_filter, f"priority '{priority_name}'")
         
+    except TickTickAuthenticationError as e:
+        logger.error(f"Authentication error in get_tasks_by_priority: {e}")
+        return f"❌ Authentication Error: {str(e)}\n\nPlease authenticate with TickTick in LibreChat."
+    except TickTickAPIError as e:
+        logger.error(f"API error in get_tasks_by_priority: {e}")
+        return f"❌ TickTick API Error: {str(e)}\n\nThe TickTick service may be experiencing issues."
+    except TickTickNetworkError as e:
+        logger.error(f"Network error in get_tasks_by_priority: {e}")
+        return f"❌ Network Error: {str(e)}\n\nPlease check your internet connection and try again."
     except Exception as e:
-        logger.error(f"Error in get_tasks_by_priority: {e}")
-        return f"Error retrieving projects: {str(e)}"
+        logger.error(f"Unexpected error in get_tasks_by_priority: {e}")
+        return f"❌ Unexpected Error: {str(e)}"
 
 @mcp.tool()
 async def get_tasks_due_today() -> str:
     """Get all tasks from TickTick that are due today. Ignores closed projects."""
-    if not ticktick:
-        if not initialize_client():
-            return "Failed to initialize TickTick client. Please check your API credentials."
-    
     try:
-        projects = ticktick.get_projects()
-        if 'error' in projects:
-            return f"Error fetching projects: {projects['error']}"
+        client = get_client()
+        projects_result: Union[List[Dict[str, Any]], Dict[str, Any]] = client.get_projects()
+        
+        if isinstance(projects_result, dict) and 'error' in projects_result:
+            return f"Error fetching projects: {projects_result['error']}"
+        
+        projects: List[Dict[str, Any]] = projects_result  # type: ignore
         
         def today_filter(task: Dict[str, Any]) -> bool:
             return _is_task_due_today(task)
         
         return _get_project_tasks_by_filter(projects, today_filter, "due today")
         
+    except TickTickAuthenticationError as e:
+        logger.error(f"Authentication error in get_tasks_due_today: {e}")
+        return f"❌ Authentication Error: {str(e)}\n\nPlease authenticate with TickTick in the LibreChat UI."
+    except TickTickAPIError as e:
+        logger.error(f"API error in get_tasks_due_today: {e}")
+        return f"❌ TickTick API Error: {str(e)}\n\nUnable to retrieve tasks. Please try again later."
+    except TickTickNetworkError as e:
+        logger.error(f"Network error in get_tasks_due_today: {e}")
+        return f"❌ Network Error: {str(e)}\n\nPlease check your internet connection and try again."
     except Exception as e:
-        logger.error(f"Error in get_tasks_due_today: {e}")
-        return f"Error retrieving projects: {str(e)}"
+        logger.error(f"Unexpected error in get_tasks_due_today: {e}")
+        return f"❌ Unexpected Error: {str(e)}"
 
 @mcp.tool()
 async def get_overdue_tasks() -> str:
     """Get all overdue tasks from TickTick. Ignores closed projects."""
-    if not ticktick:
-        if not initialize_client():
-            return "Failed to initialize TickTick client. Please check your API credentials."
-    
     try:
-        projects = ticktick.get_projects()
-        if 'error' in projects:
-            return f"Error fetching projects: {projects['error']}"
+        client = get_client()
+        projects_result: Union[List[Dict[str, Any]], Dict[str, Any]] = client.get_projects()
+        
+        if isinstance(projects_result, dict) and 'error' in projects_result:
+            return f"Error fetching projects: {projects_result['error']}"
+        
+        projects: List[Dict[str, Any]] = projects_result  # type: ignore
         
         def overdue_filter(task: Dict[str, Any]) -> bool:
             return _is_task_overdue(task)
         
         return _get_project_tasks_by_filter(projects, overdue_filter, "overdue")
         
+    except TickTickAuthenticationError as e:
+        logger.error(f"Authentication error in get_overdue_tasks: {e}")
+        return f"❌ Authentication Error: {str(e)}\n\nPlease authenticate with TickTick in LibreChat."
+    except TickTickAPIError as e:
+        logger.error(f"API error in get_overdue_tasks: {e}")
+        return f"❌ TickTick API Error: {str(e)}\n\nThe TickTick service may be experiencing issues."
+    except TickTickNetworkError as e:
+        logger.error(f"Network error in get_overdue_tasks: {e}")
+        return f"❌ Network Error: {str(e)}\n\nPlease check your internet connection and try again."
     except Exception as e:
-        logger.error(f"Error in get_overdue_tasks: {e}")
-        return f"Error retrieving projects: {str(e)}"
+        logger.error(f"Unexpected error in get_overdue_tasks: {e}")
+        return f"❌ Unexpected Error: {str(e)}"
 
 @mcp.tool()
 async def get_tasks_due_tomorrow() -> str:
-    """Get all tasks from TickTick that are due today. Ignores closed projects."""
-    if not ticktick:
-        if not initialize_client():
-            return "Failed to initialize TickTick client. Please check your API credentials."
-    
+    """Get all tasks from TickTick that are due tomorrow. Ignores closed projects."""
     try:
-        projects = ticktick.get_projects()
-        if 'error' in projects:
-            return f"Error fetching projects: {projects['error']}"
+        client = get_client()
+        projects_result: Union[List[Dict[str, Any]], Dict[str, Any]] = client.get_projects()
         
-        def today_filter(task: Dict[str, Any]) -> bool:
+        if isinstance(projects_result, dict) and 'error' in projects_result:
+            return f"Error fetching projects: {projects_result['error']}"
+        
+        projects: List[Dict[str, Any]] = projects_result  # type: ignore
+        
+        def tomorrow_filter(task: Dict[str, Any]) -> bool:
             return _is_task_due_in_days(task, 1)
         
-        return _get_project_tasks_by_filter(projects, today_filter, "due today")
+        return _get_project_tasks_by_filter(projects, tomorrow_filter, "due tomorrow")
         
+    except TickTickAuthenticationError as e:
+        logger.error(f"Authentication error in get_tasks_due_tomorrow: {e}")
+        return f"❌ Authentication Error: {str(e)}\n\nPlease authenticate with TickTick in LibreChat."
+    except TickTickAPIError as e:
+        logger.error(f"API error in get_tasks_due_tomorrow: {e}")
+        return f"❌ TickTick API Error: {str(e)}\n\nThe TickTick service may be experiencing issues."
+    except TickTickNetworkError as e:
+        logger.error(f"Network error in get_tasks_due_tomorrow: {e}")
+        return f"❌ Network Error: {str(e)}\n\nPlease check your internet connection and try again."
     except Exception as e:
-        logger.error(f"Error in get_tasks_due_today: {e}")
-        return f"Error retrieving projects: {str(e)}"
+        logger.error(f"Unexpected error in get_tasks_due_tomorrow: {e}")
+        return f"❌ Unexpected Error: {str(e)}"
     
 @mcp.tool()
 async def get_tasks_due_in_days(days: int) -> str:
@@ -702,17 +1064,17 @@ async def get_tasks_due_in_days(days: int) -> str:
     Args:
         days: Number of days from today (0 = today, 1 = tomorrow, etc.)
     """
-    if not ticktick:
-        if not initialize_client():
-            return "Failed to initialize TickTick client. Please check your API credentials."
-    
     if days < 0:
         return "Days must be a non-negative integer."
     
     try:
-        projects = ticktick.get_projects()
-        if 'error' in projects:
-            return f"Error fetching projects: {projects['error']}"
+        client = get_client()
+        projects_result: Union[List[Dict[str, Any]], Dict[str, Any]] = client.get_projects()
+        
+        if isinstance(projects_result, dict) and 'error' in projects_result:
+            return f"Error fetching projects: {projects_result['error']}"
+        
+        projects: List[Dict[str, Any]] = projects_result  # type: ignore
         
         def days_filter(task: Dict[str, Any]) -> bool:
             return _is_task_due_in_days(task, days)
@@ -720,21 +1082,30 @@ async def get_tasks_due_in_days(days: int) -> str:
         day_description = "today" if days == 0 else f"in {days} day{'s' if days != 1 else ''}"
         return _get_project_tasks_by_filter(projects, days_filter, f"due {day_description}")
         
+    except TickTickAuthenticationError as e:
+        logger.error(f"Authentication error in get_tasks_due_in_days: {e}")
+        return f"❌ Authentication Error: {str(e)}\n\nPlease authenticate with TickTick in LibreChat."
+    except TickTickAPIError as e:
+        logger.error(f"API error in get_tasks_due_in_days: {e}")
+        return f"❌ TickTick API Error: {str(e)}\n\nThe TickTick service may be experiencing issues."
+    except TickTickNetworkError as e:
+        logger.error(f"Network error in get_tasks_due_in_days: {e}")
+        return f"❌ Network Error: {str(e)}\n\nPlease check your internet connection and try again."
     except Exception as e:
-        logger.error(f"Error in get_tasks_due_in_days: {e}")
-        return f"Error retrieving projects: {str(e)}"
+        logger.error(f"Unexpected error in get_tasks_due_in_days: {e}")
+        return f"❌ Unexpected Error: {str(e)}"
 
 @mcp.tool()
 async def get_tasks_due_this_week() -> str:
     """Get all tasks from TickTick that are due within the next 7 days. Ignores closed projects."""
-    if not ticktick:
-        if not initialize_client():
-            return "Failed to initialize TickTick client. Please check your API credentials."
-    
     try:
-        projects = ticktick.get_projects()
-        if 'error' in projects:
-            return f"Error fetching projects: {projects['error']}"
+        client = get_client()
+        projects_result: Union[List[Dict[str, Any]], Dict[str, Any]] = client.get_projects()
+        
+        if isinstance(projects_result, dict) and 'error' in projects_result:
+            return f"Error fetching projects: {projects_result['error']}"
+        
+        projects: List[Dict[str, Any]] = projects_result  # type: ignore
         
         def week_filter(task: Dict[str, Any]) -> bool:
             due_date = task.get('dueDate')
@@ -751,9 +1122,18 @@ async def get_tasks_due_this_week() -> str:
         
         return _get_project_tasks_by_filter(projects, week_filter, "due this week")
         
+    except TickTickAuthenticationError as e:
+        logger.error(f"Authentication error in get_tasks_due_this_week: {e}")
+        return f"❌ Authentication Error: {str(e)}\n\nPlease authenticate with TickTick in LibreChat."
+    except TickTickAPIError as e:
+        logger.error(f"API error in get_tasks_due_this_week: {e}")
+        return f"❌ TickTick API Error: {str(e)}\n\nThe TickTick service may be experiencing issues."
+    except TickTickNetworkError as e:
+        logger.error(f"Network error in get_tasks_due_this_week: {e}")
+        return f"❌ Network Error: {str(e)}\n\nPlease check your internet connection and try again."
     except Exception as e:
-        logger.error(f"Error in get_tasks_due_this_week: {e}")
-        return f"Error retrieving projects: {str(e)}"
+        logger.error(f"Unexpected error in get_tasks_due_this_week: {e}")
+        return f"❌ Unexpected Error: {str(e)}"
 
 @mcp.tool()
 async def search_tasks(search_term: str) -> str:
@@ -763,26 +1143,35 @@ async def search_tasks(search_term: str) -> str:
     Args:
         search_term: Text to search for (case-insensitive)
     """
-    if not ticktick:
-        if not initialize_client():
-            return "Failed to initialize TickTick client. Please check your API credentials."
-    
     if not search_term.strip():
         return "Search term cannot be empty."
     
     try:
-        projects = ticktick.get_projects()
-        if 'error' in projects:
-            return f"Error fetching projects: {projects['error']}"
+        client = get_client()
+        projects_result: Union[List[Dict[str, Any]], Dict[str, Any]] = client.get_projects()
+        
+        if isinstance(projects_result, dict) and 'error' in projects_result:
+            return f"Error fetching projects: {projects_result['error']}"
+        
+        projects: List[Dict[str, Any]] = projects_result  # type: ignore
         
         def search_filter(task: Dict[str, Any]) -> bool:
             return _task_matches_search(task, search_term)
         
         return _get_project_tasks_by_filter(projects, search_filter, f"matching '{search_term}'")
         
+    except TickTickAuthenticationError as e:
+        logger.error(f"Authentication error in search_tasks: {e}")
+        return f"❌ Authentication Error: {str(e)}\n\nPlease authenticate with TickTick in LibreChat."
+    except TickTickAPIError as e:
+        logger.error(f"API error in search_tasks: {e}")
+        return f"❌ TickTick API Error: {str(e)}\n\nThe TickTick service may be experiencing issues."
+    except TickTickNetworkError as e:
+        logger.error(f"Network error in search_tasks: {e}")
+        return f"❌ Network Error: {str(e)}\n\nPlease check your internet connection and try again."
     except Exception as e:
-        logger.error(f"Error in search_tasks: {e}")
-        return f"Error retrieving projects: {str(e)}"
+        logger.error(f"Unexpected error in search_tasks: {e}")
+        return f"❌ Unexpected Error: {str(e)}"
 
 @mcp.tool()
 async def batch_create_tasks(tasks: List[Dict[str, Any]]) -> str:
@@ -804,10 +1193,6 @@ async def batch_create_tasks(tasks: List[Dict[str, Any]]) -> str:
             {"title": "Example B", "project_id": "1234XYZ", "content": "Description", "start_date": "2025-07-18T10:00:00", "due_date": "2025-07-19T10:00:00"}
         ]
     """
-    if not ticktick:
-        if not initialize_client():
-            return "Failed to initialize TickTick client. Please check your API credentials."
-    
     if not tasks:
         return "No tasks provided. Please provide a list of tasks to create."
     
@@ -833,6 +1218,8 @@ async def batch_create_tasks(tasks: List[Dict[str, Any]]) -> str:
     failed_tasks = []
     
     try:
+        client = get_client()
+        
         for i, task_data in enumerate(tasks):
             try:
                 # Extract task parameters with defaults
@@ -844,7 +1231,7 @@ async def batch_create_tasks(tasks: List[Dict[str, Any]]) -> str:
                 priority = task_data.get('priority', 0)
                 
                 # Create the task
-                result = ticktick.create_task(
+                result = client.create_task(
                     title=title,
                     project_id=project_id,
                     content=content,
@@ -854,10 +1241,26 @@ async def batch_create_tasks(tasks: List[Dict[str, Any]]) -> str:
                 )
                 
                 if 'error' in result:
-                    failed_tasks.append(f"Task {i + 1} ('{title}'): {result['error']}")
+                    # Parse error type for specific messaging
+                    error_type = result.get('type', 'unknown')
+                    error_msg = result['error']
+                    
+                    if error_type == 'auth':
+                        failed_tasks.append(f"Task {i + 1} ('{title}'): Authentication failed (401)")
+                    elif error_type == 'permission':
+                        failed_tasks.append(f"Task {i + 1} ('{title}'): Permission denied (403)")
+                    elif error_type == 'not_found':
+                        failed_tasks.append(f"Task {i + 1} ('{title}'): Project not found (404)")
+                    elif error_type == 'network':
+                        failed_tasks.append(f"Task {i + 1} ('{title}'): Network error")
+                    else:
+                        failed_tasks.append(f"Task {i + 1} ('{title}'): {error_msg}")
                 else:
                     created_tasks.append((i + 1, title, result))
                     
+            except ValueError as e:
+                # Validation errors from TaskValidator
+                failed_tasks.append(f"Task {i + 1} ('{task_data.get('title', 'Unknown')}'): Validation error - {str(e)}")
             except Exception as e:
                 failed_tasks.append(f"Task {i + 1} ('{task_data.get('title', 'Unknown')}'): {str(e)}")
         
@@ -879,9 +1282,18 @@ async def batch_create_tasks(tasks: List[Dict[str, Any]]) -> str:
         
         return result_message
         
+    except TickTickAuthenticationError as e:
+        logger.error(f"Authentication error in batch_create_tasks: {e}")
+        return f"❌ Authentication Error: {str(e)}\n\nPlease authenticate with TickTick in LibreChat before creating tasks."
+    except TickTickAPIError as e:
+        logger.error(f"API error in batch_create_tasks: {e}")
+        return f"❌ TickTick API Error: {str(e)}\n\nThe TickTick service may be experiencing issues."
+    except TickTickNetworkError as e:
+        logger.error(f"Network error in batch_create_tasks: {e}")
+        return f"❌ Network Error: {str(e)}\n\nPlease check your internet connection and try again."
     except Exception as e:
-        logger.error(f"Error in batch_create_tasks: {e}")
-        return f"Error during batch task creation: {str(e)}"
+        logger.error(f"Unexpected error in batch_create_tasks: {e}")
+        return f"❌ Unexpected Error: {str(e)}"
 
 # New MCP Tools for Getting things done framework (Priority / Due Dates)
 
@@ -891,14 +1303,14 @@ async def get_engaged_tasks() -> str:
     Get all tasks from TickTick that are "Engaged".
     This includes tasks marked as high priority (5), due today or overdue.
     """
-    if not ticktick:
-        if not initialize_client():
-            return "Failed to initialize TickTick client. Please check your API credentials."
-    
     try:
-        projects = ticktick.get_projects()
-        if 'error' in projects:
-            return f"Error fetching projects: {projects['error']}"
+        client = get_client()
+        projects_result: Union[List[Dict[str, Any]], Dict[str, Any]] = client.get_projects()
+        
+        if isinstance(projects_result, dict) and 'error' in projects_result:
+            return f"Error fetching projects: {projects_result['error']}"
+        
+        projects: List[Dict[str, Any]] = projects_result  # type: ignore
         
         def engaged_filter(task: Dict[str, Any]) -> bool:
             is_high_priority = task.get('priority', 0) == 5
@@ -908,9 +1320,18 @@ async def get_engaged_tasks() -> str:
         
         return _get_project_tasks_by_filter(projects, engaged_filter, "engaged")
         
+    except TickTickAuthenticationError as e:
+        logger.error(f"Authentication error in get_engaged_tasks: {e}")
+        return f"❌ Authentication Error: {str(e)}\n\nPlease authenticate with TickTick in LibreChat."
+    except TickTickAPIError as e:
+        logger.error(f"API error in get_engaged_tasks: {e}")
+        return f"❌ TickTick API Error: {str(e)}\n\nThe TickTick service may be experiencing issues."
+    except TickTickNetworkError as e:
+        logger.error(f"Network error in get_engaged_tasks: {e}")
+        return f"❌ Network Error: {str(e)}\n\nPlease check your internet connection and try again."
     except Exception as e:
-        logger.error(f"Error in get_engaged_tasks: {e}")
-        return f"Error retrieving projects: {str(e)}"
+        logger.error(f"Unexpected error in get_engaged_tasks: {e}")
+        return f"❌ Unexpected Error: {str(e)}"
 
 @mcp.tool()
 async def get_next_tasks() -> str:
@@ -918,14 +1339,14 @@ async def get_next_tasks() -> str:
     Get all tasks from TickTick that are "Next".
     This includes tasks marked as medium priority (3) or due tomorrow.
     """
-    if not ticktick:
-        if not initialize_client():
-            return "Failed to initialize TickTick client. Please check your API credentials."
-    
     try:
-        projects = ticktick.get_projects()
-        if 'error' in projects:
-            return f"Error fetching projects: {projects['error']}"
+        client = get_client()
+        projects_result: Union[List[Dict[str, Any]], Dict[str, Any]] = client.get_projects()
+        
+        if isinstance(projects_result, dict) and 'error' in projects_result:
+            return f"Error fetching projects: {projects_result['error']}"
+        
+        projects: List[Dict[str, Any]] = projects_result  # type: ignore
         
         def next_filter(task: Dict[str, Any]) -> bool:
             is_medium_priority = task.get('priority', 0) == 3
@@ -934,16 +1355,25 @@ async def get_next_tasks() -> str:
         
         return _get_project_tasks_by_filter(projects, next_filter, "next")
         
+    except TickTickAuthenticationError as e:
+        logger.error(f"Authentication error in get_next_tasks: {e}")
+        return f"❌ Authentication Error: {str(e)}\n\nPlease authenticate with TickTick in LibreChat."
+    except TickTickAPIError as e:
+        logger.error(f"API error in get_next_tasks: {e}")
+        return f"❌ TickTick API Error: {str(e)}\n\nThe TickTick service may be experiencing issues."
+    except TickTickNetworkError as e:
+        logger.error(f"Network error in get_next_tasks: {e}")
+        return f"❌ Network Error: {str(e)}\n\nPlease check your internet connection and try again."
     except Exception as e:
-        logger.error(f"Error in get_next_tasks: {e}")
-        return f"Error retrieving projects: {str(e)}"
+        logger.error(f"Unexpected error in get_next_tasks: {e}")
+        return f"❌ Unexpected Error: {str(e)}"
 
 @mcp.tool()
 async def create_subtask(
     subtask_title: str,
     parent_task_id: str,
     project_id: str,
-    content: str = None,
+    content: Optional[str] = None,
     priority: int = 0
 ) -> str:
     """
@@ -956,16 +1386,13 @@ async def create_subtask(
         content: Optional content/description for the subtask
         priority: Priority level (0: None, 1: Low, 3: Medium, 5: High) (optional)
     """
-    if not ticktick:
-        if not initialize_client():
-            return "Failed to initialize TickTick client. Please check your API credentials."
-    
     # Validate priority
     if priority not in [0, 1, 3, 5]:
         return "Invalid priority. Must be 0 (None), 1 (Low), 3 (Medium), or 5 (High)."
     
     try:
-        subtask = ticktick.create_subtask(
+        client = get_client()
+        subtask = client.create_subtask(
             subtask_title=subtask_title,
             parent_task_id=parent_task_id,
             project_id=project_id,
@@ -974,12 +1401,37 @@ async def create_subtask(
         )
         
         if 'error' in subtask:
-            return f"Error creating subtask: {subtask['error']}"
+            error_type = subtask.get('type', 'unknown')
+            error_msg = subtask['error']
+            
+            if error_type == 'auth':
+                return f"❌ Authentication Error: {error_msg}\n\nPlease re-authenticate with TickTick in LibreChat."
+            elif error_type == 'permission':
+                return f"❌ Permission Denied: {error_msg}\n\nYou don't have permission to create subtasks."
+            elif error_type == 'not_found':
+                return f"❌ Parent Task Not Found: Cannot create subtask.\n\nParent Task ID: {parent_task_id}\nThe parent task may have been deleted."
+            elif error_type == 'network':
+                return f"❌ Network Error: {error_msg}\n\nPlease check your internet connection and try again."
+            else:
+                return f"❌ API Error: {error_msg}"
         
-        return f"Subtask created successfully:\n\n" + format_task(subtask)
+        return f"✅ Subtask created successfully:\n\n" + format_task(subtask)
+    except ValueError as e:
+        # Validation errors from TaskValidator
+        logger.error(f"Validation error in create_subtask: {e}")
+        return f"❌ Validation Error: {str(e)}"
+    except TickTickAuthenticationError as e:
+        logger.error(f"Authentication error in create_subtask: {e}")
+        return f"❌ Authentication Error: {str(e)}\n\nPlease authenticate with TickTick in LibreChat."
+    except TickTickAPIError as e:
+        logger.error(f"API error in create_subtask: {e}")
+        return f"❌ TickTick API Error: {str(e)}\n\nUnable to create the subtask."
+    except TickTickNetworkError as e:
+        logger.error(f"Network error in create_subtask: {e}")
+        return f"❌ Network Error: {str(e)}\n\nPlease check your internet connection and try again."
     except Exception as e:
-        logger.error(f"Error in create_subtask: {e}")
-        return f"Error creating subtask: {str(e)}"
+        logger.error(f"Unexpected error in create_subtask: {e}")
+        return f"❌ Unexpected Error: {str(e)}"
 
 def main():
     """Main entry point for the MCP server."""

@@ -131,6 +131,155 @@ The server handles token refresh automatically, so you won't need to reauthentic
 
 Once connected, you'll see the TickTick MCP server tools available in Claude, indicated by the 🔨 (tools) icon.
 
+## Usage with LibreChat (Multi-User)
+
+LibreChat is a multi-user chat platform that supports MCP servers with OAuth2 authentication. This TickTick MCP server has been designed to work seamlessly with LibreChat's multi-user environment.
+
+### Key Features for LibreChat
+
+- **Per-User Authentication**: Each user authenticates with their own TickTick account via OAuth2
+- **Process Isolation**: LibreChat spawns separate MCP processes per user with isolated tokens
+- **Automatic Token Management**: LibreChat handles token storage and injection into process environment
+- **Docker Compatible**: Designed to run in containerized environments (Docker, Unraid, etc.)
+
+### Server Setup (For LibreChat Administrators)
+
+1. **Clone and Install**:
+   ```bash
+   git clone https://github.com/jacepark12/ticktick-mcp.git
+   cd ticktick-mcp
+   uv venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   uv pip install -e .
+   ```
+
+2. **Register OAuth Application** at [TickTick Developer Center](https://developer.ticktick.com/manage):
+   - Set redirect URI to: `http://your-librechat-domain:3080/oauth/callback`
+   - Note your Client ID and Client Secret
+   - For local testing: `http://localhost:3080/oauth/callback`
+
+3. **Configure LibreChat Environment**:
+
+   Add to your LibreChat `.env` file or Docker environment:
+   ```env
+   TICKTICK_CLIENT_ID=your_client_id_here
+   TICKTICK_CLIENT_SECRET=your_client_secret_here
+   ```
+
+4. **Add MCP Server to LibreChat Configuration**:
+
+   Copy the provided `librechat_config.yaml` to your LibreChat configuration, or add this to your `librechat.yaml`:
+   ```yaml
+   version: 1.0.0
+
+   mcpServers:
+     ticktick:
+       type: stdio
+       command: uv
+       args:
+         - "run"
+         - "--directory"
+         - "/app/ticktick-mcp"  # Update path for your setup
+         - "-m"
+         - "ticktick_mcp.cli"
+         - "run"
+
+       env:
+         TICKTICK_CLIENT_ID: ${TICKTICK_CLIENT_ID}
+         TICKTICK_CLIENT_SECRET: ${TICKTICK_CLIENT_SECRET}
+
+       oauth:
+         authorization_url: https://ticktick.com/oauth/authorize
+         token_url: https://ticktick.com/oauth/token
+         client_id: ${TICKTICK_CLIENT_ID}
+         client_secret: ${TICKTICK_CLIENT_SECRET}
+         scope: "tasks:read tasks:write"
+         redirect_uri: http://localhost:3080/oauth/callback
+
+       startup: false
+       timeout: 30000
+       initTimeout: 10000
+   ```
+
+5. **Docker Setup** (if using Docker):
+
+   Ensure the ticktick-mcp directory is mounted and accessible:
+   ```yaml
+   volumes:
+     - /path/to/ticktick-mcp:/app/ticktick-mcp
+   ```
+
+6. **Restart LibreChat** to load the new MCP server configuration.
+
+### User Setup (For LibreChat End Users)
+
+1. **Authentication**:
+   - When first using TickTick commands in LibreChat, you'll be prompted to authenticate
+   - Click the "Authenticate" button in the LibreChat UI
+   - You'll be redirected to TickTick to authorize access
+   - After authorization, return to LibreChat - you're ready to use TickTick!
+
+2. **Using TickTick in Chat**:
+
+   Once authenticated, you can use natural language commands:
+   - "Show me all my TickTick projects"
+   - "Create a task called 'Review PR' in my Work project with high priority"
+   - "What tasks are due today?"
+   - "Show me my high priority tasks"
+   - "Mark task X as complete"
+
+### Multi-User Considerations
+
+- **Isolated Data**: Each user's TickTick data is completely isolated - users can only access their own tasks and projects
+- **Token Lifetime**: Access tokens have a limited lifetime. Users may need to re-authenticate periodically
+- **Token Refresh**: The server automatically attempts to refresh tokens, but refresh tokens also expire
+- **Process Per User**: LibreChat spawns a new MCP process for each user session with their specific tokens
+
+### Troubleshooting
+
+**"TICKTICK_ACCESS_TOKEN not found in environment"**
+- User needs to authenticate via LibreChat UI
+- Click the authenticate button when prompted
+- Verify OAuth2 redirect URI matches your LibreChat deployment
+
+**"TickTick API connection failed"**
+- Verify TICKTICK_CLIENT_ID and TICKTICK_CLIENT_SECRET are set in LibreChat's server environment
+- Check that the OAuth application is properly configured in TickTick Developer Center
+- Ensure redirect URI in TickTick app matches LibreChat's callback URL
+
+**Token Refresh Issues**
+- Refresh tokens expire after a period of inactivity
+- Users will need to re-authenticate when refresh tokens expire
+- This is a TickTick API limitation, not a bug in the MCP server
+
+**Docker/Container Issues**
+- Ensure the ticktick-mcp directory path in the config matches the container's mount path
+- Verify `uv` is available in the container's PATH
+- Check container logs for Python/dependency errors
+
+### Alternative: Manual Token Entry (customUserVars)
+
+If LibreChat's OAuth2 integration has issues, you can use manual token entry instead. See `librechat_config.yaml` for the alternative configuration using `customUserVars`. Users will need to:
+
+1. Get their tokens from [TickTick Developer Portal](https://developer.ticktick.com/manage)
+2. Enter tokens in LibreChat's MCP settings
+3. Tokens will be stored per-user by LibreChat
+
+### Dida365 Support (Chinese TickTick)
+
+For Dida365 users, update the OAuth URLs in your LibreChat configuration:
+```yaml
+oauth:
+  authorization_url: https://dida365.com/oauth/authorize
+  token_url: https://dida365.com/oauth/token
+  # ... rest of config
+
+env:
+  TICKTICK_BASE_URL: "https://api.dida365.com/open/v1"
+  TICKTICK_AUTH_URL: "https://dida365.com/oauth/authorize"
+  TICKTICK_TOKEN_URL: "https://dida365.com/oauth/token"
+```
+
 ## Available MCP Tools
 
 | Tool | Description | Parameters |
@@ -144,6 +293,7 @@ Once connected, you'll see the TickTick MCP server tools available in Claude, in
 | `complete_task` | Mark a task as complete | `project_id`, `task_id` |
 | `delete_task` | Delete a task | `project_id`, `task_id` |
 | `create_project` | Create a new project | `name`, `color` (optional), `view_mode` (optional) |
+| `update_project` | Update an existing project | `project_id`, `name` (optional), `color` (optional), `view_mode` (optional) |
 | `delete_project` | Delete a project | `project_id` |
 
 ## Task-specific MCP Tools
@@ -182,6 +332,7 @@ Here are some example prompts to use with Claude after connecting the TickTick M
 - "List all tasks in my personal project"
 - "Mark the task 'Buy groceries' as complete"
 - "Create a new project called 'Vacation Planning' with a blue color"
+- "Update my 'Work' project to use kanban view and change the color to green"
 - "When is my next deadline in TickTick?"
 
 ### Task Filtering Queries
