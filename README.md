@@ -24,16 +24,36 @@ All platforms require the same initial setup steps below.
 
 ## Prerequisites
 
-- Python 3.10 or higher
-- [uv](https://github.com/astral-sh/uv) - Fast Python package installer and resolver
+- Python 3.10 or higher (automatically checked during npx installation)
+- [uv](https://github.com/astral-sh/uv) - Fast Python package installer (only needed for manual installation)
 - TickTick account with API access
 - TickTick API credentials (Client ID, Client Secret, Access Token)
 
 ## Installation
 
+### Option 1: Quick Install with npx (Recommended)
+
+Install and set up in one command - works with **all platforms**:
+
+```bash
+npx @varming73/ticktick-mcp
+```
+
+This will:
+- ✅ Automatically check for Python 3.10+
+- ✅ Install all Python dependencies
+- ✅ Make the server ready for Claude Desktop, Claude Code, and LibreChat
+
+**Or install globally:**
+```bash
+npm install -g @varming73/ticktick-mcp
+```
+
+### Option 2: Manual Installation with uv
+
 1. **Clone this repository**:
    ```bash
-   git clone https://github.com/jacepark12/ticktick-mcp.git
+   git clone https://github.com/Varming73/ticktick-mcp.git
    cd ticktick-mcp
    ```
 
@@ -55,13 +75,19 @@ All platforms require the same initial setup steps below.
    uv pip install -e .
    ```
 
-3. **Authenticate with TickTick**:
-   ```bash
-   # Run the authentication flow
-   uv run -m ticktick_mcp.cli auth
-   ```
+## Authentication
 
-   This will:
+**Authenticate with TickTick** (required for all installation methods):
+
+```bash
+# If installed with npx globally:
+ticktick-mcp auth
+
+# If installed with uv:
+uv run -m ticktick_mcp.cli auth
+```
+
+This will:
    - Ask for your TickTick Client ID and Client Secret
    - Open a browser window for you to log in to TickTick
    - Automatically save your access tokens to a `.env` file
@@ -125,7 +151,21 @@ The server handles token refresh automatically, so you won't need to reauthentic
    notepad %APPDATA%\Claude\claude_desktop_config.json
    ```
 
-3. Add the TickTick MCP server configuration, using absolute paths:
+3. Add the TickTick MCP server configuration:
+
+   **Option A: If you installed with npx:**
+   ```json
+   {
+      "mcpServers": {
+         "ticktick": {
+            "command": "npx",
+            "args": ["@varming73/ticktick-mcp"]
+         }
+      }
+   }
+   ```
+
+   **Option B: If you installed manually with uv:**
    ```json
    {
       "mcpServers": {
@@ -147,26 +187,28 @@ Once connected, you'll see the TickTick MCP server tools available in Claude, in
 
 ### Prerequisites
 
-1. **Authenticate with TickTick first**:
-   ```bash
-   cd /path/to/ticktick-mcp
-   uv run -m ticktick_mcp.cli auth
-   ```
-   This creates a `.env` file with your tokens.
+**Authenticate with TickTick first**:
+```bash
+# If installed with npx globally:
+ticktick-mcp auth
 
-2. **Find your paths**:
-   ```bash
-   # Find uv path
-   which uv
-
-   # Get ticktick-mcp directory path
-   cd /path/to/ticktick-mcp && pwd
-   ```
+# If installed with uv:
+cd /path/to/ticktick-mcp
+uv run -m ticktick_mcp.cli auth
+```
+This creates a `.env` file with your tokens.
 
 ### Setup
 
 Add the TickTick MCP server to Claude Code:
 
+**Option A: If you installed with npx (simplest):**
+```bash
+claude mcp add --transport stdio ticktick --scope user \
+  -- npx @varming73/ticktick-mcp
+```
+
+**Option B: If you installed manually with uv:**
 ```bash
 # Basic setup (user scope - available across all projects)
 claude mcp add --transport stdio ticktick --scope user \

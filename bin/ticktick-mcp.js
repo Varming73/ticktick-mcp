@@ -32,12 +32,15 @@ function findPython() {
   });
 }
 
-// Run the MCP server
+// Run the MCP server or auth command
 async function main() {
   const python = await findPython();
   
-  // Run using python -m ticktick_mcp.cli run
-  const args = ['-m', 'ticktick_mcp.cli', 'run'];
+  // Check for 'auth' command
+  const command = process.argv[2];
+  const args = command === 'auth' 
+    ? ['-m', 'ticktick_mcp.cli', 'auth']
+    : ['-m', 'ticktick_mcp.cli', 'run'];
   
   const child = spawn(python, args, {
     cwd: projectRoot,
