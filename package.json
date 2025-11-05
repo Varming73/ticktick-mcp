@@ -1,5 +1,5 @@
 {
-  "name": "@varming73/ticktick-mcp",
+  "name": "@varming/ticktick-mcp",
   "version": "0.1.0",
   "description": "Model Context Protocol (MCP) server for TickTick task management (Enhanced fork with multi-user support, npx install, validation, and connection pooling)",
   "type": "module",

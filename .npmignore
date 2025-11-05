@@ -1,0 +1,20 @@
+# Ignore Python cache files
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Ignore working documentation
+CODE_REVIEW_FIXES.md
+QA_MASTER_REVIEW.md
+IMPLEMENTATION_PLAN_OPTION2.md
+LIBRECHAT_IMPLEMENTATION_COMPLETE.md
+
+# Ignore test files
+test_server.py
+test_env_based_init.py
+test_multi_user_simulation.py
+
+# Ignore other files
+.env.template
+ticktick-openapi.md
+.serena/

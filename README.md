@@ -40,7 +40,7 @@ All platforms require the same initial setup steps below.
 Install and set up in one command - works with **all platforms**:
 
 ```bash
-npx @varming73/ticktick-mcp
+npx @varming/ticktick-mcp
 ```
 
 This will:
@@ -50,7 +50,7 @@ This will:
 
 **Or install globally:**
 ```bash
-npm install -g @varming73/ticktick-mcp
+npm install -g @varming/ticktick-mcp
 ```
 
 ### Option 2: Manual Installation with uv
@@ -163,7 +163,7 @@ The server handles token refresh automatically, so you won't need to reauthentic
       "mcpServers": {
          "ticktick": {
             "command": "npx",
-            "args": ["@varming73/ticktick-mcp"]
+            "args": ["@varming/ticktick-mcp"]
          }
       }
    }
@@ -209,7 +209,7 @@ Add the TickTick MCP server to Claude Code:
 **Option A: If you installed with npx (simplest):**
 ```bash
 claude mcp add --transport stdio ticktick --scope user \
-  -- npx @varming73/ticktick-mcp
+  -- npx @varming/ticktick-mcp
 ```
 
 **Option B: If you installed manually with uv:**
@@ -270,12 +270,12 @@ LibreChat is a multi-user chat platform that supports MCP servers with OAuth2 au
 
 Install directly from npm:
 ```bash
-npx @varming73/ticktick-mcp
+npx @varming/ticktick-mcp
 ```
 
 Or install globally:
 ```bash
-npm install -g @varming73/ticktick-mcp
+npm install -g @varming/ticktick-mcp
 ```
 
 The npx installation will:
@@ -321,7 +321,7 @@ uv pip install -e .
        type: stdio
        command: npx
        args:
-         - "@varming73/ticktick-mcp"
+         - "@varming/ticktick-mcp"
 
        env:
          TICKTICK_CLIENT_ID: ${TICKTICK_CLIENT_ID}
