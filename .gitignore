@@ -30,5 +30,18 @@ Thumbs.db
 # Log files
 *.log
 
+# Working documentation files
+CODE_REVIEW_FIXES.md
+QA_MASTER_REVIEW.md
+IMPLEMENTATION_PLAN_OPTION2.md
+LIBRECHAT_IMPLEMENTATION_COMPLETE.md
+
+# Serena assistant files
+.serena/
+
+# Test files (optional - uncomment if you don't want to track them)
+# test_env_based_init.py
+# test_multi_user_simulation.py
+
 # Others
 mcp.txt
