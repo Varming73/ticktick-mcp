@@ -12,6 +12,16 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for Ti
 - 🔄 Full integration with TickTick's open API
 - 🔌 Seamless integration with Claude and other MCP clients
 
+## Quick Start - Choose Your Platform
+
+This MCP server works with multiple platforms. Choose the setup guide for your use case:
+
+- **[Claude Desktop](#usage-with-claude-for-desktop)** - Personal use on macOS/Windows
+- **[Claude Code](#usage-with-claude-code)** - AI-powered IDE with MCP support
+- **[LibreChat](#usage-with-librechat-multi-user)** - Multi-user chat platform (Unraid/Docker)
+
+All platforms require the same initial setup steps below.
+
 ## Prerequisites
 
 - Python 3.10 or higher
@@ -130,6 +140,72 @@ The server handles token refresh automatically, so you won't need to reauthentic
 4. Restart Claude for Desktop
 
 Once connected, you'll see the TickTick MCP server tools available in Claude, indicated by the 🔨 (tools) icon.
+
+## Usage with Claude Code
+
+[Claude Code](https://claude.ai/code) is Anthropic's AI-powered IDE with built-in MCP support.
+
+### Prerequisites
+
+1. **Authenticate with TickTick first**:
+   ```bash
+   cd /path/to/ticktick-mcp
+   uv run -m ticktick_mcp.cli auth
+   ```
+   This creates a `.env` file with your tokens.
+
+2. **Find your paths**:
+   ```bash
+   # Find uv path
+   which uv
+
+   # Get ticktick-mcp directory path
+   cd /path/to/ticktick-mcp && pwd
+   ```
+
+### Setup
+
+Add the TickTick MCP server to Claude Code:
+
+```bash
+# Basic setup (user scope - available across all projects)
+claude mcp add --transport stdio ticktick --scope user \
+  -- /path/to/uv run --directory /path/to/ticktick-mcp -m ticktick_mcp.cli run
+
+# Example with actual paths (macOS):
+claude mcp add --transport stdio ticktick --scope user \
+  -- /Users/yourname/.local/bin/uv run --directory /Users/yourname/projects/ticktick-mcp -m ticktick_mcp.cli run
+```
+
+**Scope Options:**
+- `--scope user` (recommended): Available across all your projects
+- `--scope local`: Only available in current project
+- `--scope project`: Shared with team via `.mcp.json` (requires authentication setup for each team member)
+
+### Managing Your Server
+
+```bash
+# List all configured servers
+claude mcp list
+
+# Get details for ticktick server
+claude mcp get ticktick
+
+# Remove the server
+claude mcp remove ticktick
+
+# Check server status in Claude Code
+/mcp
+```
+
+### Using TickTick in Claude Code
+
+Once configured, you can use natural language in Claude Code:
+- "Show me all my TickTick projects"
+- "Create a task to review the PR in my Work project"
+- "What tasks are due today?"
+
+The 🔨 icon indicates MCP tools are available.
 
 ## Usage with LibreChat (Multi-User)
 
