@@ -2,6 +2,10 @@
 
 A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for TickTick that enables interacting with your TickTick task management system directly through Claude and other MCP clients.
 
+> **Note**: This is a fork of [jacepark12/ticktick-mcp](https://github.com/jacepark12/ticktick-mcp) with enhancements for multi-user support (LibreChat), npx installation, input validation, connection pooling, and comprehensive error handling.
+> 
+> Original work by [Jaesung Park](https://github.com/jacepark12).
+
 ## Features
 
 - 📋 View all your TickTick projects and tasks
@@ -559,6 +563,37 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 3. Commit your changes (`git commit -m 'Add some amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
+
+## Attribution
+
+This project is a fork of [jacepark12/ticktick-mcp](https://github.com/jacepark12/ticktick-mcp) created by [Jaesung Park](https://github.com/jacepark12).
+
+### Enhancements in This Fork
+
+- 🔐 **Multi-User Support**: Full LibreChat integration with per-user OAuth tokens
+- 📦 **npx Installation**: Universal installation via npm for all platforms
+- ✅ **Input Validation**: Comprehensive validation with TaskValidator class
+- 🔄 **Connection Pooling**: HTTP connection pooling with automatic retry
+- 🛡️ **Error Handling**: Master-level error handling with HTTP status code parsing
+- 🔧 **Missing Tools**: Added `update_project` tool for project management
+- 📚 **Documentation**: Enhanced docs for Claude Desktop, Claude Code, and LibreChat
+
+### Original Contributors
+
+Special thanks to the original contributors:
+- [Jaesung Park](https://github.com/jacepark12) - Original author
+- [yangkghjh](https://github.com/yangkghjh)
+- [Monacraft](https://github.com/Monacraft)
+- [wsargent](https://github.com/wsargent)
+- [lisah2u](https://github.com/lisah2u)
+- [richgrov](https://github.com/richgrov)
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+Original work Copyright (c) 2024 Jaesung Park  
+Fork enhancements Copyright (c) 2025 Lars Varming
 
 ## License
 

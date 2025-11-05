@@ -1,7 +1,7 @@
 {
   "name": "@varming73/ticktick-mcp",
   "version": "0.1.0",
-  "description": "Model Context Protocol (MCP) server for TickTick task management",
+  "description": "Model Context Protocol (MCP) server for TickTick task management (Enhanced fork with multi-user support, npx install, validation, and connection pooling)",
   "type": "module",
   "bin": {
     "ticktick-mcp": "./bin/ticktick-mcp.js"
@@ -19,7 +19,7 @@
     "librechat",
     "ai"
   ],
-  "author": "Lars Varming",
+  "author": "Lars Varming (fork), Jaesung Park (original)",
   "license": "MIT",
   "repository": {
     "type": "git",
