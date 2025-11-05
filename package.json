@@ -1,0 +1,49 @@
+{
+  "name": "@varming73/ticktick-mcp",
+  "version": "0.1.0",
+  "description": "Model Context Protocol (MCP) server for TickTick task management",
+  "type": "module",
+  "bin": {
+    "ticktick-mcp": "./bin/ticktick-mcp.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install.js",
+    "test": "node scripts/test.js"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ticktick",
+    "task-management",
+    "claude",
+    "librechat",
+    "ai"
+  ],
+  "author": "Lars Varming",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Varming73/ticktick-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Varming73/ticktick-mcp/issues"
+  },
+  "homepage": "https://github.com/Varming73/ticktick-mcp#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "ticktick_mcp/",
+    "setup.py",
+    "requirements.txt",
+    "README.md",
+    "LICENSE"
+  ],
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ]
+}

@@ -218,23 +218,45 @@ LibreChat is a multi-user chat platform that supports MCP servers with OAuth2 au
 - **Automatic Token Management**: LibreChat handles token storage and injection into process environment
 - **Docker Compatible**: Designed to run in containerized environments (Docker, Unraid, etc.)
 
+### Installation Options
+
+#### Option 1: Using npx (Recommended)
+
+Install directly from npm:
+```bash
+npx @varming73/ticktick-mcp
+```
+
+Or install globally:
+```bash
+npm install -g @varming73/ticktick-mcp
+```
+
+The npx installation will:
+- ✅ Automatically check for Python 3.10+
+- ✅ Install all Python dependencies
+- ✅ Set up the MCP server executable
+- ✅ Work seamlessly with LibreChat's configuration
+
+#### Option 2: Manual Installation
+
+Clone and install from source:
+```bash
+git clone https://github.com/Varming73/ticktick-mcp.git
+cd ticktick-mcp
+uv venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+uv pip install -e .
+```
+
 ### Server Setup (For LibreChat Administrators)
 
-1. **Clone and Install**:
-   ```bash
-   git clone https://github.com/jacepark12/ticktick-mcp.git
-   cd ticktick-mcp
-   uv venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   uv pip install -e .
-   ```
-
-2. **Register OAuth Application** at [TickTick Developer Center](https://developer.ticktick.com/manage):
+1. **Register OAuth Application** at [TickTick Developer Center](https://developer.ticktick.com/manage):
    - Set redirect URI to: `http://your-librechat-domain:3080/oauth/callback`
    - Note your Client ID and Client Secret
    - For local testing: `http://localhost:3080/oauth/callback`
 
-3. **Configure LibreChat Environment**:
+2. **Configure LibreChat Environment**:
 
    Add to your LibreChat `.env` file or Docker environment:
    ```env
@@ -242,9 +264,26 @@ LibreChat is a multi-user chat platform that supports MCP servers with OAuth2 au
    TICKTICK_CLIENT_SECRET=your_client_secret_here
    ```
 
-4. **Add MCP Server to LibreChat Configuration**:
+3. **Add MCP Server to LibreChat Configuration**:
 
-   Copy the provided `librechat_config.yaml` to your LibreChat configuration, or add this to your `librechat.yaml`:
+   **If you installed via npx:**
+   ```yaml
+   version: 1.0.0
+
+   mcpServers:
+     ticktick:
+       type: stdio
+       command: npx
+       args:
+         - "@varming73/ticktick-mcp"
+
+       env:
+         TICKTICK_CLIENT_ID: ${TICKTICK_CLIENT_ID}
+         TICKTICK_CLIENT_SECRET: ${TICKTICK_CLIENT_SECRET}
+         # User tokens will be injected automatically by LibreChat
+   ```
+
+   **If you installed manually with uv:**
    ```yaml
    version: 1.0.0
 
