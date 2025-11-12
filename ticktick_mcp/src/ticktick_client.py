@@ -211,7 +211,7 @@ class TickTickClient:
         
         try:
             # Send the token request
-            response = requests.post(self.token_url, data=token_data, headers=headers)
+            response = requests.post(self.token_url, data=token_data, headers=headers, timeout=30)
             response.raise_for_status()
             
             # Parse the response
@@ -283,28 +283,29 @@ class TickTickClient:
         
         try:
             # Make the request using session (with connection pooling)
+            # Timeout set to 30 seconds to prevent indefinite hangs
             if method == "GET":
-                response = self.session.get(url, headers=self.headers)
+                response = self.session.get(url, headers=self.headers, timeout=30)
             elif method == "POST":
-                response = self.session.post(url, headers=self.headers, json=data)
+                response = self.session.post(url, headers=self.headers, json=data, timeout=30)
             elif method == "DELETE":
-                response = self.session.delete(url, headers=self.headers)
+                response = self.session.delete(url, headers=self.headers, timeout=30)
             else:
                 raise ValueError(f"Unsupported HTTP method: {method}")
-            
+
             # Check if the request was unauthorized (401)
             if response.status_code == 401:
                 logger.info("Access token expired. Attempting to refresh...")
-                
+
                 # Try to refresh the access token
                 if self._refresh_access_token():
                     # Retry the request with the new token
                     if method == "GET":
-                        response = self.session.get(url, headers=self.headers)
+                        response = self.session.get(url, headers=self.headers, timeout=30)
                     elif method == "POST":
-                        response = self.session.post(url, headers=self.headers, json=data)
+                        response = self.session.post(url, headers=self.headers, json=data, timeout=30)
                     elif method == "DELETE":
-                        response = self.session.delete(url, headers=self.headers)
+                        response = self.session.delete(url, headers=self.headers, timeout=30)
             
             # Raise an exception for 4xx/5xx status codes
             response.raise_for_status()

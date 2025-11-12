@@ -47,9 +47,6 @@ async def get_engaged_tasks_tool() -> str:
     client = get_client()
     projects_result: Union[List[Dict[str, Any]], Dict[str, Any]] = client.get_projects()
 
-    if isinstance(projects_result, dict) and 'error' in projects_result:
-        return parse_error_response(projects_result)
-
     projects = ensure_list_response(projects_result)
     if isinstance(projects, str):
         return projects  # Error message
@@ -74,9 +71,6 @@ async def get_next_tasks_tool() -> str:
     """
     client = get_client()
     projects_result: Union[List[Dict[str, Any]], Dict[str, Any]] = client.get_projects()
-
-    if isinstance(projects_result, dict) and 'error' in projects_result:
-        return parse_error_response(projects_result)
 
     projects = ensure_list_response(projects_result)
     if isinstance(projects, str):

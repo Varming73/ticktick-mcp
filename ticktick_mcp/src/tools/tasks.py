@@ -364,9 +364,6 @@ async def get_all_tasks_tool() -> str:
     client = get_client()
     projects_result: Union[List[Dict[str, Any]], Dict[str, Any]] = client.get_projects()
 
-    if isinstance(projects_result, dict) and 'error' in projects_result:
-        return parse_error_response(projects_result)
-
     projects = ensure_list_response(projects_result)
     if isinstance(projects, str):
         return projects  # Error message
@@ -391,9 +388,6 @@ async def get_tasks_by_priority_tool(priority_id: int) -> str:
     client = get_client()
     projects_result: Union[List[Dict[str, Any]], Dict[str, Any]] = client.get_projects()
 
-    if isinstance(projects_result, dict) and 'error' in projects_result:
-        return parse_error_response(projects_result)
-
     projects = ensure_list_response(projects_result)
     if isinstance(projects, str):
         return projects  # Error message
@@ -411,9 +405,6 @@ async def get_tasks_due_today_tool() -> str:
     client = get_client()
     projects_result: Union[List[Dict[str, Any]], Dict[str, Any]] = client.get_projects()
 
-    if isinstance(projects_result, dict) and 'error' in projects_result:
-        return parse_error_response(projects_result)
-
     projects = ensure_list_response(projects_result)
     if isinstance(projects, str):
         return projects  # Error message
@@ -427,9 +418,6 @@ async def get_overdue_tasks_tool() -> str:
     client = get_client()
     projects_result: Union[List[Dict[str, Any]], Dict[str, Any]] = client.get_projects()
 
-    if isinstance(projects_result, dict) and 'error' in projects_result:
-        return parse_error_response(projects_result)
-
     projects = ensure_list_response(projects_result)
     if isinstance(projects, str):
         return projects  # Error message
@@ -442,9 +430,6 @@ async def get_tasks_due_tomorrow_tool() -> str:
     """Get all tasks from TickTick that are due tomorrow. Ignores closed projects."""
     client = get_client()
     projects_result: Union[List[Dict[str, Any]], Dict[str, Any]] = client.get_projects()
-
-    if isinstance(projects_result, dict) and 'error' in projects_result:
-        return parse_error_response(projects_result)
 
     projects = ensure_list_response(projects_result)
     if isinstance(projects, str):
@@ -470,9 +455,6 @@ async def get_tasks_due_in_days_tool(days: int) -> str:
     client = get_client()
     projects_result: Union[List[Dict[str, Any]], Dict[str, Any]] = client.get_projects()
 
-    if isinstance(projects_result, dict) and 'error' in projects_result:
-        return parse_error_response(projects_result)
-
     projects = ensure_list_response(projects_result)
     if isinstance(projects, str):
         return projects  # Error message
@@ -489,9 +471,6 @@ async def get_tasks_due_this_week_tool() -> str:
     """Get all tasks from TickTick that are due within the next 7 days. Ignores closed projects."""
     client = get_client()
     projects_result: Union[List[Dict[str, Any]], Dict[str, Any]] = client.get_projects()
-
-    if isinstance(projects_result, dict) and 'error' in projects_result:
-        return parse_error_response(projects_result)
 
     projects = ensure_list_response(projects_result)
     if isinstance(projects, str):
@@ -526,9 +505,6 @@ async def search_tasks_tool(search_term: str) -> str:
 
     client = get_client()
     projects_result: Union[List[Dict[str, Any]], Dict[str, Any]] = client.get_projects()
-
-    if isinstance(projects_result, dict) and 'error' in projects_result:
-        return parse_error_response(projects_result)
 
     projects = ensure_list_response(projects_result)
     if isinstance(projects, str):
