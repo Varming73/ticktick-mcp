@@ -224,10 +224,11 @@ class TickTickAuth:
         httpd = None
         try:
             # Use a socket server to handle the callback
+            # Bind to 127.0.0.1 (localhost only) for security
             OAuthCallbackHandler.auth_code = None
-            httpd = socketserver.TCPServer(("", self.port), OAuthCallbackHandler)
-            
-            print(f"Waiting for authentication callback on port {self.port}...")
+            httpd = socketserver.TCPServer(("127.0.0.1", self.port), OAuthCallbackHandler)
+
+            print(f"Waiting for authentication callback on localhost:{self.port}...")
             
             # Run the server until we get the authorization code
             # Set a timeout for the server
@@ -284,7 +285,7 @@ class TickTickAuth:
             "Authorization": f"Basic {auth_b64}",
             "Content-Type": "application/x-www-form-urlencoded",
             "Accept-Encoding": None,
-            "User-Agent": 'curl/8.7.1'
+            "User-Agent": 'TickTick-MCP-Server/0.1.0 (Python; MCP)'
         }
         
         try:

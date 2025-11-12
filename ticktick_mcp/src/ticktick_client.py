@@ -158,16 +158,17 @@ class TickTickClient:
             "Authorization": f"Bearer {self.access_token}",
             "Content-Type": "application/json",
             "Accept-Encoding": None,
-            "User-Agent": 'curl/8.7.1'
+            "User-Agent": 'TickTick-MCP-Server/0.1.0 (Python; MCP)'
         }
         
         # Initialize session with connection pooling and retry logic
         self.session = requests.Session()
         retry_strategy = Retry(
             total=3,  # Retry up to 3 times
-            backoff_factor=1,  # Wait 1s, 2s, 4s between retries
-            status_forcelist=[429, 500, 502, 503, 504],  # Retry on these status codes
-            allowed_methods=["GET", "POST", "PUT", "DELETE"]  # Retry on all methods
+            backoff_factor=2,  # Wait 2s, 4s, 8s between retries (exponential)
+            status_forcelist=[500, 502, 503, 504],  # Retry on server errors (not 429)
+            allowed_methods=["GET", "POST", "PUT", "DELETE"],  # Retry on all methods
+            respect_retry_after_header=True  # Honor Retry-After header for rate limits
         )
         adapter = HTTPAdapter(
             pool_connections=10,  # Number of connection pools to cache
@@ -339,6 +340,22 @@ class TickTickClient:
                     "error": "Resource not found. It may have been deleted.",
                     "status_code": 404,
                     "type": "not_found"
+                }
+            elif status_code == 429:
+                # Rate limit exceeded - extract retry-after header if available
+                retry_after = None
+                if e.response and 'Retry-After' in e.response.headers:
+                    try:
+                        retry_after = int(e.response.headers['Retry-After'])
+                    except (ValueError, TypeError):
+                        retry_after = None
+
+                retry_msg = f"Retry after {retry_after} seconds." if retry_after else "Please try again later."
+                return {
+                    "error": f"Rate limit exceeded. {retry_msg}",
+                    "status_code": 429,
+                    "type": "rate_limit",
+                    "retry_after": retry_after
                 }
             elif status_code and status_code >= 500:
                 return {
