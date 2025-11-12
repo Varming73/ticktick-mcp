@@ -35,6 +35,10 @@ Thumbs.db
 # Log files
 *.log
 
+# Test coverage
+.coverage
+htmlcov/
+
 # Working documentation files
 CODE_REVIEW_FIXES.md
 QA_MASTER_REVIEW.md
