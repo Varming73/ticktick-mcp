@@ -612,5 +612,35 @@ class TickTickClient:
             data["content"] = content
         if priority is not None:
             data["priority"] = priority
-            
+
         return self._make_request("POST", "/task", data)
+
+    # Context manager support for proper resource cleanup
+
+    def close(self) -> None:
+        """
+        Close the HTTP session and cleanup resources.
+
+        This should be called when the client is no longer needed to
+        properly close all HTTP connections in the connection pool.
+        """
+        if hasattr(self, 'session') and self.session:
+            self.session.close()
+            logger.debug("TickTick client session closed")
+
+    def __enter__(self):
+        """Context manager entry point."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit point - cleanup resources."""
+        self.close()
+        return False  # Don't suppress exceptions
+
+    def __del__(self):
+        """Destructor - cleanup resources when object is garbage collected."""
+        try:
+            self.close()
+        except Exception:
+            # Silently fail in destructor to avoid issues during interpreter shutdown
+            pass

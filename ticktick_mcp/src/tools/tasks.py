@@ -8,14 +8,9 @@ including CRUD operations and search/filter functionality.
 from typing import Dict, List, Any, Union, Optional
 from datetime import datetime, timezone, timedelta
 
-from ..utils.errors import handle_mcp_errors, parse_error_response
+from ..utils.errors import handle_mcp_errors, parse_error_response, ensure_list_response
 from ..utils.formatting import format_task, PRIORITY_MAP
-
-
-def get_client():
-    """Import and return the client from server module to avoid circular imports."""
-    from ..server import get_client as _get_client
-    return _get_client()
+from ..client_manager import get_client
 
 
 # Helper Functions for Task Filtering
@@ -372,7 +367,9 @@ async def get_all_tasks_tool() -> str:
     if isinstance(projects_result, dict) and 'error' in projects_result:
         return parse_error_response(projects_result)
 
-    projects: List[Dict[str, Any]] = projects_result  # type: ignore
+    projects = ensure_list_response(projects_result)
+    if isinstance(projects, str):
+        return projects  # Error message
 
     def all_tasks_filter(task: Dict[str, Any]) -> bool:
         return True  # Include all tasks
@@ -397,7 +394,9 @@ async def get_tasks_by_priority_tool(priority_id: int) -> str:
     if isinstance(projects_result, dict) and 'error' in projects_result:
         return parse_error_response(projects_result)
 
-    projects: List[Dict[str, Any]] = projects_result  # type: ignore
+    projects = ensure_list_response(projects_result)
+    if isinstance(projects, str):
+        return projects  # Error message
 
     def priority_filter(task: Dict[str, Any]) -> bool:
         return task.get('priority', 0) == priority_id
@@ -415,7 +414,9 @@ async def get_tasks_due_today_tool() -> str:
     if isinstance(projects_result, dict) and 'error' in projects_result:
         return parse_error_response(projects_result)
 
-    projects: List[Dict[str, Any]] = projects_result  # type: ignore
+    projects = ensure_list_response(projects_result)
+    if isinstance(projects, str):
+        return projects  # Error message
 
     return _get_project_tasks_by_filter(projects, _is_task_due_today, "due today")
 
@@ -429,7 +430,9 @@ async def get_overdue_tasks_tool() -> str:
     if isinstance(projects_result, dict) and 'error' in projects_result:
         return parse_error_response(projects_result)
 
-    projects: List[Dict[str, Any]] = projects_result  # type: ignore
+    projects = ensure_list_response(projects_result)
+    if isinstance(projects, str):
+        return projects  # Error message
 
     return _get_project_tasks_by_filter(projects, _is_task_overdue, "overdue")
 
@@ -443,7 +446,9 @@ async def get_tasks_due_tomorrow_tool() -> str:
     if isinstance(projects_result, dict) and 'error' in projects_result:
         return parse_error_response(projects_result)
 
-    projects: List[Dict[str, Any]] = projects_result  # type: ignore
+    projects = ensure_list_response(projects_result)
+    if isinstance(projects, str):
+        return projects  # Error message
 
     def tomorrow_filter(task: Dict[str, Any]) -> bool:
         return _is_task_due_in_days(task, 1)
@@ -468,7 +473,9 @@ async def get_tasks_due_in_days_tool(days: int) -> str:
     if isinstance(projects_result, dict) and 'error' in projects_result:
         return parse_error_response(projects_result)
 
-    projects: List[Dict[str, Any]] = projects_result  # type: ignore
+    projects = ensure_list_response(projects_result)
+    if isinstance(projects, str):
+        return projects  # Error message
 
     def days_filter(task: Dict[str, Any]) -> bool:
         return _is_task_due_in_days(task, days)
@@ -486,7 +493,9 @@ async def get_tasks_due_this_week_tool() -> str:
     if isinstance(projects_result, dict) and 'error' in projects_result:
         return parse_error_response(projects_result)
 
-    projects: List[Dict[str, Any]] = projects_result  # type: ignore
+    projects = ensure_list_response(projects_result)
+    if isinstance(projects, str):
+        return projects  # Error message
 
     def week_filter(task: Dict[str, Any]) -> bool:
         due_date = task.get('dueDate')
@@ -521,7 +530,9 @@ async def search_tasks_tool(search_term: str) -> str:
     if isinstance(projects_result, dict) and 'error' in projects_result:
         return parse_error_response(projects_result)
 
-    projects: List[Dict[str, Any]] = projects_result  # type: ignore
+    projects = ensure_list_response(projects_result)
+    if isinstance(projects, str):
+        return projects  # Error message
 
     def search_filter(task: Dict[str, Any]) -> bool:
         return _task_matches_search(task, search_term)

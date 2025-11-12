@@ -7,13 +7,8 @@ for task prioritization and management.
 
 from typing import Dict, List, Any, Union
 
-from ..utils.errors import handle_mcp_errors, parse_error_response
-
-
-def get_client():
-    """Import and return the client from server module to avoid circular imports."""
-    from ..server import get_client as _get_client
-    return _get_client()
+from ..utils.errors import handle_mcp_errors, parse_error_response, ensure_list_response
+from ..client_manager import get_client
 
 
 def _is_task_due_today(task: Dict[str, Any]) -> bool:
@@ -55,7 +50,9 @@ async def get_engaged_tasks_tool() -> str:
     if isinstance(projects_result, dict) and 'error' in projects_result:
         return parse_error_response(projects_result)
 
-    projects: List[Dict[str, Any]] = projects_result  # type: ignore
+    projects = ensure_list_response(projects_result)
+    if isinstance(projects, str):
+        return projects  # Error message
 
     def engaged_filter(task: Dict[str, Any]) -> bool:
         is_high_priority = task.get('priority', 0) == 5
@@ -81,7 +78,9 @@ async def get_next_tasks_tool() -> str:
     if isinstance(projects_result, dict) and 'error' in projects_result:
         return parse_error_response(projects_result)
 
-    projects: List[Dict[str, Any]] = projects_result  # type: ignore
+    projects = ensure_list_response(projects_result)
+    if isinstance(projects, str):
+        return projects  # Error message
 
     def next_filter(task: Dict[str, Any]) -> bool:
         is_medium_priority = task.get('priority', 0) == 3

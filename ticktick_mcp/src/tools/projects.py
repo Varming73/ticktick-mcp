@@ -6,28 +6,21 @@ This module contains all MCP tools related to managing TickTick projects.
 
 from typing import Dict, List, Any, Union, Optional
 
-from ..utils.errors import handle_mcp_errors, parse_error_response
+from ..utils.errors import handle_mcp_errors, parse_error_response, ensure_list_response
 from ..utils.formatting import format_project
-
-
-def get_client():
-    """Import and return the client from server module to avoid circular imports."""
-    from ..server import get_client as _get_client
-    return _get_client()
+from ..client_manager import get_client
 
 
 @handle_mcp_errors
 async def get_projects_tool() -> str:
     """Get all projects from TickTick."""
     client = get_client()
-    projects_result: Union[List[Dict[str, Any]], Dict[str, Any]] = client.get_projects()
+    projects_result = client.get_projects()
 
-    # Check if result is an error dict
-    if isinstance(projects_result, dict) and 'error' in projects_result:
-        return parse_error_response(projects_result)
-
-    # Type narrowing: at this point, projects_result must be a List
-    projects: List[Dict[str, Any]] = projects_result  # type: ignore
+    # Check if result is valid or an error
+    projects = ensure_list_response(projects_result)
+    if isinstance(projects, str):
+        return projects  # Error message
 
     if not projects:
         return "No projects found."

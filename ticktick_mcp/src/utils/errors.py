@@ -96,6 +96,38 @@ def handle_mcp_errors(func: Callable) -> Callable:
     return wrapper
 
 
+def ensure_list_response(response: Any) -> Any:
+    """
+    Ensure API response is a list, returning error string if not.
+
+    This helper function handles the common pattern of checking if an API
+    response is an error dict or an unexpected format, providing proper
+    type narrowing without using # type: ignore.
+
+    Args:
+        response: API response that should be a list
+
+    Returns:
+        The list if valid, or an error message string if error/invalid
+
+    Example:
+        projects = client.get_projects()
+        result = ensure_list_response(projects)
+        if isinstance(result, str):
+            return result  # Error message
+        # result is now definitely a list
+    """
+    # Check if it's an error dict
+    if isinstance(response, dict) and 'error' in response:
+        return parse_error_response(response)
+
+    # Check if it's a list
+    if not isinstance(response, list):
+        return "❌ Unexpected response format from TickTick API"
+
+    return response
+
+
 def parse_error_response(response_dict: dict) -> str:
     """
     Parse an error response from the TickTick API client and return a user-friendly message.
